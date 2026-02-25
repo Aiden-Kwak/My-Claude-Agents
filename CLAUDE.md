@@ -1,0 +1,269 @@
+# [프로젝트명]
+
+> **시작 방법**: `docs/requirements.md`를 작성한 뒤 `/start-dev`를 실행하세요.
+> 에이전트들이 기획문서를 읽고 설계 → 구현 → QA까지 자동으로 진행합니다.
+
+---
+
+## 프로젝트 개요
+
+> `docs/requirements.md` 작성 후, design-agent가 자동으로 이 섹션을 채웁니다.
+
+---
+
+## 기술 스택
+
+> `docs/requirements.md`에 명시하거나, design-agent가 자동으로 채웁니다.
+
+---
+
+## 프로젝트 구조
+
+> 개발이 진행되면서 자동으로 업데이트됩니다.
+
+---
+
+## 에이전트 역할 및 개발 워크플로우
+
+```
+[1] design-agent    →  docs/requirements.md 읽기
+                    →  docs/api-spec.md, docs/data-model.md 생성
+         ↓
+[2] planning-agent  →  설계 문서 읽기
+                    →  개발 태스크 등록 (TaskCreate) + docs/dev-plan.md 생성
+         ↓
+[3] db-agent        →  설계 문서 + dev-plan 읽기 → 백엔드/DB 구현
+    frontend-agent  →  설계 문서 + dev-plan 읽기 → 프론트엔드 구현  (병렬 가능)
+         ↓
+[4] qa-agent        →  전체 검증 + docs/qa-report.md 생성
+                    →  발견된 교훈을 CLAUDE.md ## 누적 교훈에 기록
+```
+
+### 에이전트 호출 방법
+
+```
+Task(subagent_type: "design-agent",   prompt: "...")
+Task(subagent_type: "planning-agent", prompt: "...")
+Task(subagent_type: "db-agent",       prompt: "...")
+Task(subagent_type: "frontend-agent", prompt: "...")
+Task(subagent_type: "qa-agent",       prompt: "...")
+```
+
+### 병렬 실행 (독립적인 작업은 한 번에)
+
+```
+# 한 메시지에 두 Task를 동시에 호출하면 병렬 실행됨
+Task(db-agent, run_in_background: true)
+Task(frontend-agent, run_in_background: true)
+```
+
+---
+
+## 구현 베스트 프랙티스
+
+### 0 — 목적
+
+이 규칙은 유지보수성, 안전성, 개발 속도를 보장합니다.
+**MUST** 규칙은 반드시 준수하며, **SHOULD** 규칙은 강력히 권장합니다.
+
+---
+
+### 1 — 코딩 전
+
+- **BP-1 (MUST)** 작업 시작 전 `docs/requirements.md`와 모든 설계 문서를 먼저 읽을 것.
+- **BP-2 (MUST)** 복잡한 작업은 접근 방식을 먼저 정리하고 확인할 것.
+- **BP-3 (SHOULD)** 2가지 이상의 접근법이 있으면 장단점을 명시하고 선택 근거를 남길 것.
+
+---
+
+### 2 — 코딩 중
+
+- **C-1 (MUST)** TDD 순서 준수: 스텁 작성 → 실패 테스트 작성 → 구현.
+- **C-2 (MUST)** 기존 코드베이스의 도메인 용어와 일관된 함수/변수명 사용.
+- **C-3 (SHOULD NOT)** 작은 함수로 충분한 경우 클래스 도입 금지.
+- **C-4 (SHOULD)** 단순하고 조합 가능하며 테스트 가능한 함수 선호.
+- **C-5 (SHOULD NOT)** 재사용, 독립적 테스트, 가독성 개선 목적이 아니면 함수 추출 금지.
+- **C-6 (SHOULD NOT)** 자명한 코드에 주석 추가 금지. 핵심 주의사항에만 사용.
+
+#### Backend (Python)
+
+- **PY-1 (MUST)** PEP8 준수, 모든 함수에 type hints 작성.
+- **PY-2 (MUST)** 패키지 관리는 `uv` 사용. `pip` 직접 호출 금지.
+  ```bash
+  uv add django-environ          # 패키지 추가
+  uv add --dev pytest            # 개발 의존성
+  uv sync                        # requirements 설치
+  ```
+- **PY-3 (MUST)** 의존성은 반드시 `requirements.txt`에 기록. `uv pip compile pyproject.toml -o requirements.txt`로 생성.
+- **PY-4 (MUST)** 비밀 키 관리는 `django-environ`으로 통일. `python-dotenv` 사용 금지.
+  ```python
+  # settings.py
+  import environ
+  env = environ.Env()
+  environ.Env.read_env(BASE_DIR / ".env")
+
+  SECRET_KEY = env("SECRET_KEY")
+  DATABASE_URL = env.db("DATABASE_URL")
+  DEBUG = env.bool("DEBUG", default=False)
+  ```
+- **PY-5 (MUST)** `.env`는 절대 커밋 금지. `.env.example`에 키 이름만 남기고 값은 비울 것.
+  ```
+  # .env.example
+  SECRET_KEY=
+  DATABASE_URL=
+  DEBUG=
+  ALLOWED_HOSTS=
+  ```
+- **PY-6 (MUST)** `SECRET_KEY`, `DATABASE_URL`, API 키 등 민감 정보를 코드에 하드코딩 금지. 위반 시 즉시 교체.
+- **PY-7 (SHOULD)** DB 쿼리는 ORM 우선 사용. Raw SQL은 성능 이슈가 명확할 때만 허용.
+
+#### Frontend (TypeScript)
+
+- **TS-1 (MUST)** 모든 컴포넌트와 함수에 TypeScript 타입 정의. `any` 사용 금지.
+- **TS-2 (MUST)** API 호출은 `src/lib/api.ts` 단일 파일로 집중 관리.
+- **TS-3 (MUST)** `import type { … }` 구문으로 타입 전용 임포트 분리.
+- **TS-4 (SHOULD)** TailwindCSS 클래스 사용. 인라인 `style` 지양.
+- **TS-5 (SHOULD)** `type` 기본 사용. 인터페이스 병합이 필요할 때만 `interface` 사용.
+
+---
+
+### 3 — 테스트
+
+- **T-1 (MUST)** 순수 로직 단위 테스트와 DB 연동 통합 테스트를 반드시 분리할 것.
+- **T-2 (MUST)** API 변경 시 통합 테스트 추가 또는 수정.
+- **T-3 (SHOULD)** 과도한 목킹보다 통합 테스트 선호.
+- **T-4 (SHOULD)** 복잡한 알고리즘은 단위 테스트로 철저히 검증.
+- **T-5 (SHOULD)** 테스트에 설명 없는 리터럴(`42`, `"foo"`) 직접 삽입 금지. 변수로 명명할 것.
+- **T-6 (SHOULD NOT)** 타입 체커가 잡는 조건은 테스트하지 말 것.
+- **T-7 (SHOULD)** 엣지 케이스, 경계값, 예상치 못한 입력을 테스트할 것.
+
+---
+
+### 4 — Git
+
+- **GH-1 (MUST)** Conventional Commits 형식 사용: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`.
+- **GH-2 (SHOULD NOT)** 커밋 메시지에 Claude 또는 Anthropic 언급 금지.
+
+---
+
+## 함수 작성 체크리스트
+
+구현한 함수를 검토할 때 아래를 확인하세요:
+
+1. 함수 흐름을 쉽게 따라갈 수 있는가? 그렇다면 여기서 멈춰도 됨.
+2. 순환 복잡도(중첩 if-else 수)가 지나치게 높지 않은가?
+3. 더 적합한 자료구조나 알고리즘(스택, 큐, 파서 등)이 있지 않은가?
+4. 사용되지 않는 파라미터가 있지 않은가?
+5. 불필요한 타입 캐스트가 있지 않은가?
+6. 모킹 없이 단위 테스트 가능한가? 불가능하다면 통합 테스트로 커버 가능한가?
+7. 숨겨진 비자명한 의존성이 있지 않은가?
+8. 함수명이 코드베이스 맥락에서 가장 적절한가? 대안 3개를 떠올려보고 비교할 것.
+
+> 별도 함수 추출은 재사용, 독립적 테스트, 극단적 가독성 개선 중 하나를 만족할 때만 허용.
+
+---
+
+## 테스트 작성 체크리스트
+
+작성한 테스트를 검토할 때 아래를 확인하세요:
+
+1. 입력값은 변수로 명명되어 있는가? 설명 없는 리터럴 금지.
+2. 실제 결함을 발견할 수 있는 테스트인가? 자명한 단언(`expect(2).toBe(2)`) 금지.
+3. 테스트 설명과 `expect` 단언이 일치하는가?
+4. 기대값은 함수 결과와 독립적으로 계산되었는가?
+5. 단언은 강한 것을 사용하는가? (`toEqual(1)` > `toBeGreaterThanOrEqual(1)`)
+6. 엣지 케이스, 경계값, 예상치 못한 입력이 포함되어 있는가?
+
+---
+
+## 환경 설정
+
+> `docs/requirements.md`에서 포트/DB 정보를 정의하면 에이전트가 자동으로 채웁니다.
+
+---
+
+## 개발 시작
+
+```bash
+# 1. 요구사항 작성
+cp docs/requirements.example.md docs/requirements.md
+# docs/requirements.md 편집
+
+# 2. 전체 자동 파이프라인 실행
+/start-dev
+
+# 3. 서버 실행
+./start.sh
+
+# 4. 작업 회고 및 교훈 기록
+/retrospect
+```
+
+---
+
+## 단축 명령어
+
+### QPLAN
+
+"qplan"을 입력하면:
+
+```
+코드베이스의 유사한 부분을 분석하고 현재 계획이:
+- 기존 코드베이스와 일관성이 있는지
+- 최소한의 변경만 도입하는지
+- 기존 코드를 최대한 재사용하는지
+확인하라.
+```
+
+### QCHECK
+
+"qcheck"를 입력하면:
+
+```
+회의적인 시니어 개발자 관점에서 모든 주요 코드 변경사항에 대해:
+1. 함수 작성 체크리스트 (CLAUDE.md)
+2. 테스트 작성 체크리스트 (CLAUDE.md)
+3. 구현 베스트 프랙티스 (CLAUDE.md)
+를 검토하라.
+```
+
+### QUX
+
+"qux"를 입력하면:
+
+```
+구현한 기능의 실제 사용자라고 가정하고,
+우선순위 순으로 테스트할 시나리오 목록을 작성하라.
+```
+
+### QGIT
+
+"qgit"를 입력하면:
+
+```
+모든 변경사항을 스테이징하고 커밋을 생성하라.
+
+커밋 메시지 규칙:
+- Conventional Commits 형식 사용
+- Claude 또는 Anthropic 언급 금지
+- 형식: <type>[optional scope]: <description>
+  [optional body]
+  [optional footer]
+- type: feat, fix, docs, refactor, test, chore 중 선택
+```
+
+---
+
+## 누적 교훈
+
+<!-- ⚠️ 이 섹션은 에이전트가 자동으로 관리합니다. 직접 수정 시 포맷을 유지하세요. -->
+<!--
+포맷:
+### [YYYY-MM-DD] | [프로젝트/작업명]
+**에이전트**: [에이전트 이름]
+**문제**: [발생한 문제 설명]
+**해결**: [해결 방법]
+**교훈**: [다음에 기억할 핵심 내용]
+-->
+
+_아직 기록된 교훈이 없습니다. 첫 번째 프로젝트 완료 후 `/retrospect`를 실행하면 자동으로 채워집니다._
